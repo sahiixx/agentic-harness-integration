@@ -1,0 +1,15 @@
+[Unit]
+Description=SAHIIX Unified Orchestrator
+After=docker.service sahiix-api.service sahiix-hermes.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/sahiix
+ExecStart=/usr/bin/docker-compose -f deploy/docker-compose.prod.yml up -d unified-system
+ExecStop=/usr/bin/docker-compose -f deploy/docker-compose.prod.yml stop unified-system
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

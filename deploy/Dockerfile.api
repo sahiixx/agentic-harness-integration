@@ -1,0 +1,52 @@
+# ─── Multi-stage FastAPI build ───
+FROM python:3.12-slim AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ libpq-dev curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv for fast dependency resolution
+RUN pip install --no-cache-dir uv
+
+WORKDIR /app
+
+# Copy dependency files
+COPY requirements.txt pyproject.toml ./
+
+# Create virtual environment and install dependencies
+RUN uv venv /opt/venv && \
+    /opt/venv/bin/uv pip install --no-cache -r requirements.txt
+
+# ─── Runtime stage ───
+FROM python:3.12-slim AS runtime
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --shell /bin/bash appuser
+
+WORKDIR /app
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+
+# Copy application code
+COPY --chown=appuser:appuser api/ ./api/
+COPY --chown=appuser:appuser orchestrator/ ./orchestrator/
+COPY --chown=appuser:appuser integrations/ ./integrations/
+
+# Create necessary directories
+RUN mkdir -p /tmp/opencode && chown -R appuser:appuser /tmp/opencode
+
+USER appuser
+
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+EXPOSE 8000
+
+# Use asyncio event loop (required for Termux/Android compatibility, fine on Linux too)
+CMD ["python", "-m", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--loop", "asyncio", "--workers", "2"]

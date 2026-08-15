@@ -1,0 +1,15 @@
+[Unit]
+Description=SAHIIX OS Hermes (MCP, Telegram, WA)
+After=docker.service sahiix-api.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/sahiix
+ExecStart=/usr/bin/docker-compose -f deploy/docker-compose.prod.yml up -d hermes
+ExecStop=/usr/bin/docker-compose -f deploy/docker-compose.prod.yml stop hermes
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
