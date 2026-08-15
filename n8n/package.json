@@ -1,0 +1,45 @@
+{
+  "name": "n8n-nodes-agentic-harness",
+  "version": "6.0.0",
+  "description": "n8n community node for Agentic Harness Integration Layer",
+  "keywords": ["n8n-community-node-package"],
+  "license": "MIT",
+  "homepage": "https://github.com/sahiixx/agentic-harness-integration",
+  "author": {
+    "name": "Sahiix",
+    "email": "sahiixofficial@gmail.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sahiixx/agentic-harness-integration.git"
+  },
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "format": "prettier nodes credentials --write",
+    "lint": "eslint nodes credentials package.json",
+    "lintfix": "eslint nodes credentials package.json --fix",
+    "prepublishOnly": "npm run build"
+  },
+  "files": [
+    "dist"
+  ],
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "credentials": [
+      "dist/credentials/AgenticHarnessApi.credentials.js"
+    ],
+    "nodes": [
+      "dist/nodes/AgenticHarness/AgenticHarness.node.js"
+    ]
+  },
+  "devDependencies": {
+    "@typescript-eslint/parser": "^7.0.0",
+    "eslint-plugin-n8n-nodes-base": "^1.16.0",
+    "typescript": "^5.4.0"
+  },
+  "peerDependencies": {
+    "n8n-workflow": "*"
+  }
+}
