@@ -1,9 +1,13 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import Console from '@/components/Console';
 import SidePanel from '@/components/SidePanel';
+import Dashboard from '@/components/Dashboard';
 import './globals.css';
+
+type Tier = { name: string; repo: string; url: string; why: string; integrates_with: string; status: string; version?: string; stars?: string };
+type RepoData = { total: number; tiers: number; counts: Record<string, number>; integrated: string[] };
 
 function useScrollEffects() {
   useEffect(() => {
@@ -88,6 +92,25 @@ function useFx() {
 export default function Home() {
   useScrollEffects();
   useFx();
+  const [repos, setRepos] = useState<Record<string, Tier[]> | null>(null);
+  const [repoMeta, setRepoMeta] = useState<RepoData | null>(null);
+
+  useEffect(() => {
+    fetch('/api/harness/repos')
+      .then((r) => r.json())
+      .then(setRepos)
+      .catch(() => {});
+    fetch('/api/harness/repos/summary')
+      .then((r) => r.json())
+      .then(setRepoMeta)
+      .catch(() => {});
+  }, []);
+
+  const tierLabels: Record<string, string> = {
+    tier1_xai_native: 'Tier 1 · xAI Native',
+    tier2_agent_frameworks: 'Tier 2 · Agent Frameworks',
+    tier3_specialized: 'Tier 3 · Specialized',
+  };
 
   return (
     <>
@@ -98,6 +121,9 @@ export default function Home() {
         <nav className="nav-links">
           <a href="#console" className="nav-active">Console</a>
           <a href="#systems">Systems</a>
+          <a href="#upgrades">Upgrades</a>
+          <a href="#free-grok">Free Grok</a>
+          <a href="#dashboard">Dashboard</a>
           <a href="https://sahiix-portfolio.pages.dev" target="_blank" rel="noopener">Portfolio ↗</a>
         </nav>
         <a className="nav-cta" href="#console">Live API</a>
@@ -152,6 +178,105 @@ export default function Home() {
               </a>
             ))}
           </div>
+        </section>
+
+        <section className="section" id="upgrades">
+          <div className="section-head">
+            <p className="section-kicker">Upgrade radar</p>
+            <h2 className="section-title">Repos that max the stack.</h2>
+            <p className="section-sub">
+              {repoMeta ? `${repoMeta.total} curated repos across ${repoMeta.tiers} tiers. ` : ''}
+              Live from the harness <code>/repos</code> registry — Grok (xAI SDK) integrated, rest staged.
+            </p>
+          </div>
+          {repos ? (
+            <div className="upgrade-wrap">
+              {Object.entries(repos).map(([tier, list]) => (
+                <div key={tier} className="upgrade-tier">
+                  <h3 className="upgrade-tier-title">{tierLabels[tier] ?? tier}</h3>
+                  <div className="upgrade-grid">
+                    {list.map((r) => (
+                      <a key={r.name} className="upgrade-card" href={r.url} target="_blank" rel="noopener">
+                        <div className="upgrade-card-top">
+                          <span className="upgrade-name">{r.name}</span>
+                          <span className={`upgrade-badge ${r.status === 'integrated' ? 'on' : ''}`}>{r.status}</span>
+                        </div>
+                        <p className="upgrade-why">{r.why}</p>
+                        <p className="upgrade-int">{r.integrates_with}</p>
+                        <span className="upgrade-repo">{r.repo} ↗</span>
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="section-sub">Loading registry…</p>
+          )}
+        </section>
+
+        <section className="section" id="free-grok">
+          <div className="section-head">
+            <p className="section-kicker">Free Grok access</p>
+            <h2 className="section-title">Zero-cost Grok 4.x endpoints.</h2>
+            <p className="section-sub">
+              No xAI API key needed. Configure one free provider in PM2 env, then call <code>/grok/chat</code> (auto-fallback) or <code>/grok/free/chat</code>.
+            </p>
+          </div>
+          <div className="free-grid">
+            <div className="free-card">
+              <h3>FreeTheAi <span className="free-badge">Recommended</span></h3>
+              <p>60+ models incl. Grok via <code>xai/*</code> aliases. OpenAI-compatible.</p>
+              <ol className="free-steps">
+                <li>Join <a href="https://discord.gg/secrets" target="_blank" rel="noopener">Discord</a></li>
+                <li>Run <code>/signup</code> → get API key</li>
+                <li>Daily <code>/checkin</code> in Discord</li>
+                <li>Set <code>FREETHEAI_API_KEY</code> in PM2 env</li>
+              </ol>
+              <code className="free-endpoint">Base: https://api.freetheai.xyz/v1</code>
+            </div>
+            <div className="free-card">
+              <h3>Puter <span className="free-badge">Easiest</span></h3>
+              <p>Free Grok + 100s models via OpenAI-compatible endpoint.</p>
+              <ol className="free-steps">
+                <li>Sign up at <a href="https://puter.com" target="_blank" rel="noopener">puter.com</a></li>
+                <li>Get auth token from dashboard</li>
+                <li>Set <code>PUTER_AUTH_TOKEN</code> in PM2 env</li>
+              </ol>
+              <code className="free-endpoint">Base: https://api.puter.com/puterai/openai/v1/</code>
+            </div>
+            <div className="free-card">
+              <h3>token-free-gateway <span className="free-badge">Local</span></h3>
+              <p>Run locally, 13 providers (Grok, Claude, Gemini, etc.). Browser cookies only.</p>
+              <ol className="free-steps">
+                <li><code>pip install token-free-gateway</code></li>
+                <li><code>tfg start</code> (needs Chrome)</li>
+                <li>Point to <code>http://localhost:8080/v1</code></li>
+              </ol>
+              <code className="free-endpoint">Local only — no cloud key</code>
+            </div>
+            <div className="free-card">
+              <h3>Freeloader <span className="free-badge">Cascade</span></h3>
+              <p>177+ free providers with auto-failover (Gemini, Groq, Cerebras, OpenRouter).</p>
+              <ol className="free-steps">
+                <li>Get free keys: Gemini, Groq, Cerebras, OpenRouter</li>
+                <li>Docker: <code>docker run -p 8000:8000 freeloader</code></li>
+                <li>Set keys in env</li>
+              </ol>
+              <code className="free-endpoint">Local gateway with cascade</code>
+            </div>
+          </div>
+        </section>
+
+        <section className="section" id="dashboard">
+          <div className="section-head">
+            <p className="section-kicker">Live dashboard</p>
+            <h2 className="section-title">System pulse.</h2>
+            <p className="section-sub">
+              Unified view from <code>/dashboard</code> — health, Grok session, repos, providers.
+            </p>
+          </div>
+          <Dashboard />
         </section>
       </main>
 

@@ -110,6 +110,17 @@ async def _with_retry(coro, attempts: int = 3):
             await asyncio.sleep(0.5 * (2 ** i) + random.uniform(0, 0.1))
 
 
+async def retry_async(coro, attempts: int = 3, base_delay: float = 0.5):
+    """Public retry wrapper with exponential backoff."""
+    for i in range(attempts):
+        try:
+            return await coro()
+        except Exception as exc:
+            if i == attempts - 1:
+                raise
+            await asyncio.sleep(base_delay * (2 ** i) + random.uniform(0, 0.1))
+
+
 async def azure_complete(
     messages: list[dict[str, str]],
     model: Optional[str] = None,
