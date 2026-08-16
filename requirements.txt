@@ -4,7 +4,7 @@ httpx==0.28.1
 pydantic==2.10.5
 asyncpg==0.29.0
 redis==5.2.0
-pytest==8.3.5
+pytest==9.0.3
 pytest-asyncio==0.24.0
 pytest-mock==3.14.0
-PyJWT==2.9.0
+PyJWT==2.13.0
