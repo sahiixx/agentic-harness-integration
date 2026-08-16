@@ -1,11 +1,18 @@
 """Agentic Harness Integration Layer — FastAPI application."""
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+# Disable uvloop on Android/Termux (libuv assertion failure)
+try:
+    asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
+except Exception:
+    pass
+
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, status, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -16,6 +23,21 @@ from api.nexus_bridge import enrich_lead
 from api.gapclaw_bridge import hunt
 from api.sara_bridge import generate_script
 from api.gapsolver_bridge import discover_gaps
+from api.grok_bridge import grok_chat, grok_vision, grok_voice_transcribe, grok_voice_speak, grok_chat_free, grok_vision_free, FREE_PROVIDERS
+from api.azure_openai_bridge import azure_chat, azure_embeddings, azure_chat_stream
+from api.swarm import swarm_chat
+from api.repo_registry import list_repos, summary as repo_summary
+
+# Production hardening
+from api.production import (
+    RequestIDMiddleware,
+    RedisRateLimiter,
+    CircuitBreaker,
+    health_registry,
+    ErrorResponse,
+    config,
+    get_request_id,
+)
 
 app = FastAPI(
     title="Agentic Harness Bridge",
@@ -34,6 +56,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Request ID tracing
+app.add_middleware(RequestIDMiddleware)
+
+# Redis rate limiter
+rate_limiter = RedisRateLimiter(os.getenv("REDIS_URL", "redis://localhost:6379"))
+
+# Prometheus metrics
+from prometheus_fastapi_instrumentator import Instrumentator
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
 
 # ---------------------------------------------------------------------------
@@ -430,6 +462,244 @@ async def sara_generate(req: SaraGenerateRequest, auth: dict = Depends(verify_to
 @app.post("/gapsolver/discover")
 async def gapsolver_discover(req: GapSolverDiscoverRequest, auth: dict = Depends(verify_token)):
     return await discover_gaps(req.industry, req.location, req.top_n)
+
+
+# ---------------------------------------------------------------------------
+# Grok (xAI) — native SDK: chat, vision, voice, function-calling
+# ---------------------------------------------------------------------------
+
+# Circuit breaker for external LLM calls
+grok_circuit = CircuitBreaker(failure_threshold=5, recovery_timeout=30)
+
+@grok_circuit
+async def grok_chat_with_circuit(messages: list[dict]) -> dict:
+    if os.getenv("XAI_API_KEY"):
+        return await grok_chat(messages)
+    return await grok_chat_free(messages)
+
+
+@app.post("/grok/chat")
+async def grok_chat_endpoint(messages: list[dict], auth: dict = Depends(verify_token)):
+    return await grok_chat_with_circuit(messages)
+
+
+@app.post("/grok/vision")
+async def grok_vision_endpoint(
+    img: UploadFile = File(...), prompt: str = Form(...), auth: dict = Depends(verify_token)
+):
+    import base64
+    b64 = base64.b64encode(await img.read()).decode()
+    return await grok_vision(
+        [{"role": "user", "content": prompt}],
+        f"data:image/jpeg;base64,{b64}",
+    )
+
+
+@app.post("/grok/voice/transcribe")
+async def grok_voice_transcribe_endpoint(
+    audio: UploadFile = File(...), auth: dict = Depends(verify_token)
+):
+    import base64
+    b64 = base64.b64encode(await audio.read()).decode()
+    return await grok_voice_transcribe(b64)
+
+
+@app.post("/grok/voice/speak")
+async def grok_voice_speak_endpoint(text: str = Form(...), auth: dict = Depends(verify_token)):
+    return await grok_voice_speak(text)
+
+
+# ---------------------------------------------------------------------------
+# Azure OpenAI endpoints
+# ---------------------------------------------------------------------------
+
+class AzureChatRequest(BaseModel):
+    messages: list[dict]
+    model: str = "gpt-4o"
+    temperature: float = 0.7
+    max_tokens: int = 2048
+
+
+class AzureEmbeddingsRequest(BaseModel):
+    input: str | list[str]
+    model: str = "text-embedding-3-large"
+
+
+@app.post("/azure/chat")
+async def azure_chat_endpoint(req: AzureChatRequest, auth: dict = Depends(verify_token)):
+    return await azure_chat(req.messages, req.model, req.temperature, req.max_tokens)
+
+
+@app.post("/azure/embeddings")
+async def azure_embeddings_endpoint(req: AzureEmbeddingsRequest, auth: dict = Depends(verify_token)):
+    return await azure_embeddings(req.input, req.model)
+
+
+# ---------------------------------------------------------------------------
+# Free provider endpoints (auto-fallback or explicit)
+# ---------------------------------------------------------------------------
+
+@app.post("/grok/free/chat")
+async def grok_free_chat_endpoint(
+    messages: list[dict],
+    provider: str = "freetheai",
+    auth: dict = Depends(verify_token),
+):
+    """Explicit free provider chat (freetheai|puter)."""
+    return await grok_chat_free(messages, provider=provider)
+
+
+@app.get("/grok/free/providers")
+async def grok_free_providers_endpoint(auth: dict = Depends(verify_token)):
+    """List configured free providers and their status."""
+    import os
+    status = {}
+    for name, cfg in FREE_PROVIDERS.items():
+        key = os.getenv(cfg["key_env"])
+        status[name] = {
+            "configured": bool(key),
+            "key_preview": key[:10] + "..." if key else None,
+            "base_url": cfg["base_url"],
+            "models": cfg["models"],
+        }
+    return {"providers": status}
+
+
+# ---------------------------------------------------------------------------
+# Multi-model swarm — parallel queries across all free providers
+# ---------------------------------------------------------------------------
+
+@app.post("/swarm")
+async def swarm_endpoint(messages: list[dict], auth: dict = Depends(verify_token)):
+    """Run same prompt across all free providers in parallel."""
+    return await swarm_chat(messages)
+
+
+# ---------------------------------------------------------------------------
+# Health checks — registry-based
+# ---------------------------------------------------------------------------
+
+# Register default health checks
+async def _check_redis() -> dict:
+    try:
+        import redis.asyncio as redis
+        client = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
+        await client.ping()
+        await client.close()
+        return {"healthy": True}
+    except Exception as e:
+        return {"healthy": False, "error": str(e)}
+
+
+async def _check_ollama() -> dict:
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get("http://127.0.0.1:11434/api/tags")
+            return {"healthy": resp.status_code == 200}
+    except Exception as e:
+        return {"healthy": False, "error": str(e)}
+
+
+async def _check_grok() -> dict:
+    has_key = bool(os.getenv("XAI_API_KEY") or os.getenv("FREETHEAI_API_KEY") or os.getenv("PUTER_AUTH_TOKEN"))
+    return {"healthy": has_key, "configured": has_key}
+
+
+health_registry.register("redis", _check_redis)
+health_registry.register("ollama", _check_ollama)
+health_registry.register("grok", _check_grok)
+
+
+@app.get("/health/full")
+async def full_health_check():
+    """Comprehensive health check with all registered checks."""
+    results = await health_registry.run_all()
+    overall = "healthy" if all(r["status"] == "healthy" for r in results.values()) else "degraded"
+    return {"status": overall, "checks": results, "request_id": get_request_id()}
+
+
+# ---------------------------------------------------------------------------
+# Live dashboard data — health, metrics, grok session, repo status
+# ---------------------------------------------------------------------------
+
+@app.get("/dashboard")
+async def dashboard_endpoint(auth: dict = Depends(verify_token)):
+    """Unified dashboard data for web console."""
+    import os
+    from api.unified_system import UnifiedSystem
+    from api.repo_registry import summary as repo_summary
+    
+    system = UnifiedSystem()
+    health = await system.check_all_health()
+    
+    # Grok session log
+    try:
+        with open("/tmp/opencode/grok_5hr.log") as f:
+            grok_log = f.read()[-3000:]
+    except FileNotFoundError:
+        grok_log = "(no session)"
+    
+    # Repo summary
+    repos = repo_summary()
+    
+    return {
+        "health": health,
+        "grok_session_log": grok_log,
+        "repos": repos,
+        "free_providers": {name: cfg for name, cfg in FREE_PROVIDERS.items()},
+        "uptime": "live",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Recommended upgrade repos registry (3 tiers, curated 2026-08-15)
+# ---------------------------------------------------------------------------
+
+@app.get("/repos")
+async def repos_endpoint(tier: str | None = None):
+    return list_repos(tier)
+
+
+@app.get("/repos/summary")
+async def repos_summary_endpoint():
+    return repo_summary()
+
+
+# ---------------------------------------------------------------------------
+# 5-hour Grok autonomous session + surprise: live self-analysis
+# ---------------------------------------------------------------------------
+
+_grok_session_task: asyncio.Task | None = None
+
+
+@app.post("/grok/session/start")
+async def grok_session_start(auth: dict = Depends(verify_token)):
+    global _grok_session_task
+    if _grok_session_task and not _grok_session_task.done():
+        return {"status": "already_running", "task": "active"}
+    from api.grok_5hr import run as _run_5hr
+    _grok_session_task = asyncio.create_task(_run_5hr())
+    return {"status": "started", "duration_hours": 5}
+
+
+@app.get("/grok/session/log")
+async def grok_session_log(auth: dict = Depends(verify_token)):
+    try:
+        with open("/tmp/opencode/grok_5hr.log") as f:
+            return {"log": f.read()[-4000:]}
+    except FileNotFoundError:
+        return {"log": "(no session yet)"}
+
+
+@app.post("/grok/analyze")
+async def grok_analyze(snapshot: dict, auth: dict = Depends(verify_token)):
+    """Surprise: ask Grok to critique the current system snapshot and rank upgrades."""
+    messages = [
+        {"role": "system", "content": "You are SAHIIX Grok. Given a system snapshot, return the top 3 upgrades as a ranked list with one-line justification each."},
+        {"role": "user", "content": f"Snapshot: {snapshot}"},
+    ]
+    return await grok_chat(messages)
 
 
 # ---------------------------------------------------------------------------
