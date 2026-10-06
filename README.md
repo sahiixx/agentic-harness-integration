@@ -118,12 +118,12 @@ pytest ../tests/ -v --ignore=../tests/test_live_smoke.py
 
 | Suite | Tests | What They Cover |
 |---|---|---|
-| `test_patterns.py` | 19 | 7 patterns + SSE + subtask parser (4 cases) + API endpoints + health + safety net |
+| `test_patterns.py` | 23 | 7 patterns + SSE + subtask parser (4 cases) + API endpoints + health + safety net |
 | `test_bridges.py` | 4 | NEXUS, GapClaw (budget-verified), SARA, GapSolver |
 | `test_tools.py` | 9 | Apollo, Bright Data, WATI, retry logic, failure handling, cost tracking |
 | `test_live_smoke.py` | 4 | Live Azure complete, embed, health, GapClaw (skipped without keys) |
-| **Total (mocked)** | **32** | **All mocked — no real network calls** |
-| **Total (with live)** | **36** | **Includes 4 live smoke tests** |
+| **Total (mocked)** | **36** | **All mocked — no real network calls** |
+| **Total (with live)** | **40** | **Includes 4 live smoke tests** |
 
 ### Safety Net
 
@@ -138,17 +138,17 @@ Tool tests use `Mock` (sync) for `httpx.Response` objects and `AsyncMock` only f
 ## CI/CD Pipeline
 
 1. Circular import check
-2. Full mocked test suite — 32 tests, zero real network calls
+2. Full mocked test suite — 36 tests, zero real network calls
 3. Safety net verification
 4. Docker Compose validation
-5. Live smoke test (main branch only, requires real Azure keys in secrets)
+5. Live smoke test (explicit `workflow_dispatch` with `run_live: true`, requires real Azure keys in secrets)
 
 ## Honest Status
 
 | Aspect | State |
 |---|---|
 | Architecture | ✅ Circular-import-free, mockable |
-| Tests (mocked) | ✅ 32 tests, zero real network calls |
+| Tests (mocked) | ✅ 36 tests, zero real network calls |
 | Test safety net | ✅ `RuntimeError` on unmocked HTTP |
 | Tool HTTP abstraction | ✅ `.post()`/`.get()` direct, sync response handling |
 | GapClaw determinism | ✅ `max_model_calls` budget |
