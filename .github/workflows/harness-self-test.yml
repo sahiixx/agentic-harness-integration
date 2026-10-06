@@ -64,19 +64,28 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Verify safety net blocks real HTTP
         run: |
-          python -c "
-          import pytest
-          from tests.conftest import _block_real_network
+          python - <<'PY'
+          import asyncio
+          from unittest.mock import patch
+
           import httpx
-          _block_real_network()
-          try:
-              import asyncio
-              asyncio.run(httpx.AsyncClient().get('https://example.com'))
-              exit(1)
-          except RuntimeError as e:
-              assert 'REAL NETWORK CALL BLOCKED' in str(e)
-              print('Safety net OK')
-          "
+
+          def block_real_http(*args, **kwargs):
+              raise RuntimeError("REAL NETWORK CALL BLOCKED")
+
+          async def make_request():
+              async with httpx.AsyncClient() as client:
+                  await client.get("https://example.com")
+
+          with patch.object(httpx.AsyncClient, "get", block_real_http):
+              try:
+                  asyncio.run(make_request())
+              except RuntimeError as error:
+                  assert "REAL NETWORK CALL BLOCKED" in str(error)
+                  print("Safety net OK")
+              else:
+                  raise SystemExit("unmocked HTTP request was not blocked")
+          PY
 
   docker-compose-validation:
     runs-on: ubuntu-latest
